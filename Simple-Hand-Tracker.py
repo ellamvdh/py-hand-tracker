@@ -393,7 +393,7 @@ with mp_hands.Hands(
         for b in butterflies:
             exploded = False
             age = time.time() - b['born']
-            if age >= 1.5:          # immune during first 5 seconds
+            if age >= 1.:          # immune during first 5 seconds
                 for hx, hy in hand_points:
                     dist = math.hypot(b['x'] - hx, b['y'] - hy)
                     if dist < COLLISION_RADIUS:
