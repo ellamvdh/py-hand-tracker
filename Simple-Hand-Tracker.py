@@ -46,25 +46,28 @@ FLIP_MODE = 1
 # Explosion / particle settings
 # ---------------------------
 COLLISION_RADIUS = 40
-DAISY_COUNT = 12
+DAISY_COUNT = 3
 DAISY_SPEED_MIN = 2.5
 DAISY_SPEED_MAX = 7.0
-DAISY_LIFETIME = 70
-DAISY_SIZE_MIN = 14
-DAISY_SIZE_MAX = 26
-DAISY_PETALS = 8
+DAISY_LIFETIME = 20
+DAISY_SIZE_MIN = 70
+DAISY_SIZE_MAX = 90
 
-DAISY_PETAL_COLORS = [
-    (255, 255, 255),
-    (210, 240, 255),
-    (180, 220, 255),
-    (160, 210, 255),
-]
-DAISY_CENTER_COLORS = [
-    (0,   200, 255),
-    (0,   180, 240),
-    (30,  210, 255),
-]
+# ---------------------------
+# Load daisy image
+# ---------------------------
+_daisy_src = cv2.imread("daisy.png", cv2.IMREAD_UNCHANGED)
+if _daisy_src is None:
+    raise FileNotFoundError(
+        "daisy.png not found. Place daisy.png in the same directory as this script."
+    )
+# Ensure the image has an alpha channel
+if _daisy_src.shape[2] == 3:
+    _daisy_src = cv2.cvtColor(_daisy_src, cv2.COLOR_BGR2BGRA)
+
+def _get_daisy_image(size: int) -> np.ndarray:
+    """Return daisy.png resized to (size x size), with alpha channel."""
+    return cv2.resize(_daisy_src, (size, size), interpolation=cv2.INTER_AREA)
 
 # ---------------------------
 # Idle prompt settings
@@ -148,162 +151,90 @@ def spawn_explosion(x, y):
             'x': float(x), 'y': float(y),
             'vx': math.cos(angle) * speed,
             'vy': math.sin(angle) * speed,
-            'rotation': random.uniform(0, 2 * math.pi),
-            'spin': spin,
-            'petal_color':  random.choice(DAISY_PETAL_COLORS),
-            'center_color': random.choice(DAISY_CENTER_COLORS),
+            'rotation': random.uniform(0, 360),   # degrees, for cv2.getRotationMatrix2D
+            'spin': spin,                           # radians/frame, converted to degrees on update
             'size': size,
             'life': DAISY_LIFETIME,
             'max_life': DAISY_LIFETIME,
             'gravity': random.uniform(0.04, 0.12),
+            'img': _get_daisy_image(size),          # pre-scaled daisy image for this particle
         })
 
 
 def draw_daisy(canvas, p):
-    alpha = p['life'] / p['max_life']
-    if alpha <= 0:
+    """Blit the daisy image onto the canvas, rotated and faded according to particle state."""
+    alpha_frac = p['life'] / p['max_life']
+    if alpha_frac <= 0:
         return
-    size = p['size']
-    pad  = size + 6
-    local  = np.zeros((pad * 2, pad * 2, 4), dtype=np.uint8)
-    centre = (pad, pad)
-    petal_color_bgra  = (*p['petal_color'],  255)
-    center_color_bgra = (*p['center_color'], 255)
-    petal_len = int(size * 0.82)
-    petal_w   = max(3, int(size * 0.32))
-    for i in range(DAISY_PETALS):
-        petal_angle = p['rotation'] + i * (360.0 / DAISY_PETALS)
-        rad    = math.radians(petal_angle)
-        offset = int(size * 0.45)
-        px = int(centre[0] + math.cos(rad) * offset)
-        py = int(centre[1] + math.sin(rad) * offset)
-        cv2.ellipse(local, (px, py), (petal_len, petal_w),
-                    petal_angle, 0, 360, petal_color_bgra, -1, cv2.LINE_AA)
-        outline = (
-            max(0, p['petal_color'][0] - 60),
-            max(0, p['petal_color'][1] - 60),
-            max(0, p['petal_color'][2] - 60),
-            180
-        )
-        cv2.ellipse(local, (px, py), (petal_len, petal_w),
-                    petal_angle, 0, 360, outline, 1, cv2.LINE_AA)
-    centre_r = max(4, int(size * 0.28))
-    cv2.circle(local, centre, centre_r, center_color_bgra, -1, cv2.LINE_AA)
-    dark_center = (
-        max(0, p['center_color'][0] - 40),
-        max(0, p['center_color'][1] - 60),
-        max(0, p['center_color'][2] - 60),
-        220
-    )
-    cv2.circle(local, centre, centre_r, dark_center, 1, cv2.LINE_AA)
-    cv2.circle(local, (centre[0] - centre_r//3, centre[1] - centre_r//3),
-               max(1, centre_r // 3), (255, 255, 255, 180), -1, cv2.LINE_AA)
+
+    img  = p['img']                    # BGRA, already the right size
+    size = img.shape[0]                # square
+    half = size // 2
+
+    # --- Rotate the daisy sprite ---
+    M        = cv2.getRotationMatrix2D((half, half), p['rotation'], 1.0)
+    rotated  = cv2.warpAffine(img, M, (size, size), flags=cv2.INTER_LINEAR,
+                               borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0, 0))
+
+    # --- Compute canvas region ---
     cx, cy = int(p['x']), int(p['y'])
-    x1, y1 = cx - pad, cy - pad
-    x2, y2 = cx + pad, cy + pad
+    x1, y1 = cx - half, cy - half
+    x2, y2 = x1 + size, y1 + size
+
+    # Clip to canvas bounds
     lx1 = max(0, -x1);  ly1 = max(0, -y1)
-    lx2 = local.shape[1] - max(0, x2 - canvas.shape[1])
-    ly2 = local.shape[0] - max(0, y2 - canvas.shape[0])
+    lx2 = size - max(0, x2 - canvas.shape[1])
+    ly2 = size - max(0, y2 - canvas.shape[0])
     cx1 = max(0, x1);   cy1 = max(0, y1)
     cx2 = cx1 + (lx2 - lx1)
     cy2 = cy1 + (ly2 - ly1)
+
     if cx2 <= cx1 or cy2 <= cy1 or lx2 <= lx1 or ly2 <= ly1:
         return
-    region     = canvas[cy1:cy2, cx1:cx2]
-    daisy_crop = local[ly1:ly2, lx1:lx2]
-    a = (daisy_crop[:, :, 3] / 255.0) * alpha
+
+    region      = canvas[cy1:cy2, cx1:cx2]
+    daisy_crop  = rotated[ly1:ly2, lx1:lx2]
+
+    # Combine sprite alpha with fade
+    a = (daisy_crop[:, :, 3] / 255.0) * alpha_frac
     for c in range(3):
-        region[:, :, c] = (a * daisy_crop[:, :, c] + (1 - a) * region[:, :, c]).astype(np.uint8)
+        region[:, :, c] = (
+            a * daisy_crop[:, :, c] + (1 - a) * region[:, :, c]
+        ).astype(np.uint8)
+
     canvas[cy1:cy2, cx1:cx2] = region
 
 
+
 # ---------------------------
-# Background: dark green garden
+# Background: Load image file
 # ---------------------------
 def build_background(w, h):
-    bg = np.zeros((h, w, 3), dtype=np.uint8)
-    for y in range(h):
-        t = y / h
-        r = int(4  + t * 8)
-        g = int(28 + t * 28)
-        b = int(10 + t * 14)
-        bg[y, :] = (b, g, r)
-    rng = np.random.default_rng(42)
-    for _ in range(60):
-        cx = int(rng.uniform(0, w))
-        cy = int(rng.uniform(0, h))
-        radius = int(rng.uniform(30, 120))
-        brightness = rng.uniform(0.04, 0.18)
-        y1c = max(0, cy - radius); y2c = min(h, cy + radius)
-        x1c = max(0, cx - radius); x2c = min(w, cx + radius)
-        ys, xs = np.ogrid[y1c:y2c, x1c:x2c]
-        dist = np.sqrt((xs - cx)**2 + (ys - cy)**2)
-        mask = np.clip(1 - dist / radius, 0, 1) * brightness
-        for c, gain in enumerate([0, 1, 0]):
-            bg[y1c:y2c, x1c:x2c, c] = np.clip(
-                bg[y1c:y2c, x1c:x2c, c] + mask * gain * 120, 0, 255
-            ).astype(np.uint8)
-        for c, gain in enumerate([0.2, 0.9, 0.3]):
-            bg[y1c:y2c, x1c:x2c, c] = np.clip(
-                bg[y1c:y2c, x1c:x2c, c] + mask * 0.4 * gain * 80, 0, 255
-            ).astype(np.uint8)
+    """
+    Loads background.png and resizes it to screen size.
+    Supports transparency and safe fallback.
+    """
+    path = "background.png"  # change if needed
 
-    def draw_leaf(img, tip, base, width_frac, color_dark, color_light):
-        tx, ty = tip
-        bx, by = base
-        dx, dy = tx - bx, ty - by
-        length = math.hypot(dx, dy)
-        if length < 1:
-            return
-        nx, ny = -dy / length, dx / length
-        half  = length * width_frac
-        mid_x = (tx + bx) / 2 + nx * half * 0.3
-        mid_y = (ty + by) / 2 + ny * half * 0.3
-        pts = np.array([
-            [bx, by],
-            [int(mid_x + nx * half), int(mid_y + ny * half)],
-            [tx, ty],
-            [int(mid_x - nx * half), int(mid_y - ny * half)],
-        ], dtype=np.int32)
-        cv2.fillPoly(img, [pts], color_dark)
-        cv2.line(img, (bx, by), (tx, ty), color_light, 1, cv2.LINE_AA)
+    bg = cv2.imread(path, cv2.IMREAD_UNCHANGED)
 
-    leaf_configs = [
-        (80,  (80,  220), (10, 55, 8),   (20, 90, 15),  (0.0, 1.0)),
-        (50,  (120, 320), (6,  38, 5),   (12, 68, 10),  (0.3, 1.0)),
-        (60,  (40,  100), (15, 75, 12),  (30, 110, 20), (0.0, 0.7)),
-    ]
-    for count, (smin, smax), cdark, clight, (ylo, yhi) in leaf_configs:
-        for _ in range(count):
-            bx = int(rng.uniform(0, w))
-            by = int(rng.uniform(ylo * h, yhi * h))
-            angle  = rng.uniform(0, 2 * math.pi)
-            length = int(rng.uniform(smin, smax))
-            tx = int(bx + math.cos(angle) * length)
-            ty = int(by + math.sin(angle) * length)
-            draw_leaf(bg, (tx, ty), (bx, by), rng.uniform(0.12, 0.26), cdark, clight)
+    if bg is None:
+        print("⚠️ background.png not found, using fallback color")
+        bg = np.zeros((h, w, 3), dtype=np.uint8)
+        bg[:] = (15, 45, 10)
+        return bg
 
-    bg = cv2.GaussianBlur(bg, (7, 7), 0)
+    # If image has alpha channel → remove it (since you're not using it here)
+    if bg.shape[2] == 4:
+        bg = cv2.cvtColor(bg, cv2.COLOR_BGRA2BGR)
 
-    for _ in range(35):
-        bx = int(rng.uniform(-40, w + 40))
-        by = int(rng.uniform(int(h * 0.5), h + 40))
-        angle  = rng.uniform(-math.pi * 0.6, math.pi * 0.6) - math.pi / 2
-        length = int(rng.uniform(140, 380))
-        tx = int(bx + math.cos(angle) * length)
-        ty = int(by + math.sin(angle) * length)
-        draw_leaf(bg, (tx, ty), (bx, by), rng.uniform(0.10, 0.22),
-                  (8, 45, 6), (18, 80, 12))
-
-    ys, xs = np.ogrid[:h, :w]
-    cx_v, cy_v = w / 2, h / 2
-    dist_v   = np.sqrt(((xs - cx_v) / (w / 2))**2 + ((ys - cy_v) / (h / 2))**2)
-    vignette = np.clip(1 - dist_v * 0.55, 0.35, 1.0)
-    for c in range(3):
-        bg[:, :, c] = (bg[:, :, c] * vignette).astype(np.uint8)
+    # Resize to fit screen
+    bg = cv2.resize(bg, (w, h), interpolation=cv2.INTER_AREA)
 
     return bg
 
+
+# Build once (important: NOT inside loop)
 BACKGROUND = build_background(FRAME_WIDTH, FRAME_HEIGHT)
 
 # ---------------------------
@@ -420,13 +351,13 @@ with mp_hands.Hands(
         # ---------------------------
         alive_particles = []
         for p in particles:
-            p['x']  += p['vx']
-            p['y']  += p['vy']
-            p['vy'] += p['gravity']
-            p['vx'] *= 0.97
-            p['vy'] *= 0.97
+            p['x']        += p['vx']
+            p['y']        += p['vy']
+            p['vy']       += p['gravity']
+            p['vx']       *= 0.97
+            p['vy']       *= 0.97
             p['rotation'] += math.degrees(p['spin'])
-            p['life'] -= 1
+            p['life']     -= 1
             if p['life'] > 0:
                 alive_particles.append(p)
         particles[:] = alive_particles
