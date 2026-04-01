@@ -8,6 +8,7 @@ import base64
 import threading
 import random
 import tkinter as tk
+import ctypes
 
 # ---------------------------
 # Fullscreen resolution
@@ -242,6 +243,12 @@ BACKGROUND = build_background(FRAME_WIDTH, FRAME_HEIGHT)
 # ---------------------------
 cap = cv2.VideoCapture(0)
 
+# Hide cursor on Windows
+try:
+    ctypes.windll.user32.ShowCursor(False)
+except:
+    pass  # If on non-Windows system, cursor hiding will be skipped
+
 # Idle prompt state
 last_hand_time = time.time()
 prompt_alpha   = 0.0
@@ -271,15 +278,44 @@ with mp_hands.Hands(
         if results.multi_hand_landmarks:
             last_hand_time = time.time()   # reset idle clock
             for hand_landmarks in results.multi_hand_landmarks:
+                # Sla alle hand landmarks op voor later gebruik
+                landmarks_xy = []
                 for lm in hand_landmarks.landmark:
                     x = int(lm.x * frame_resized.shape[1] * (FRAME_WIDTH / frame_resized.shape[1]))
                     y = int(lm.y * FRAME_HEIGHT)
                     hand_points.append((x, y))
-                mp_drawing.draw_landmarks(
-                    canvas, hand_landmarks, mp_hands.HAND_CONNECTIONS,
-                    mp_drawing.DrawingSpec(color=(255, 255, 255), thickness=2, circle_radius=2),
-                    mp_drawing.DrawingSpec(color=(200, 200, 200), thickness=2)
-                )
+                    landmarks_xy.append((x, y))
+                
+                # Teken alle connections handmatig
+                for connection in mp_hands.HAND_CONNECTIONS:
+                    start_idx, end_idx = connection
+                    if start_idx < len(landmarks_xy) and end_idx < len(landmarks_xy):
+                        pt1 = landmarks_xy[start_idx]
+                        pt2 = landmarks_xy[end_idx]
+                        cv2.line(canvas, pt1, pt2, (75, 100, 130), 30)
+                
+                # Teken gevulde cirkels op alle landmarks zonder randjes
+                for lm in hand_landmarks.landmark:
+                    x = int(lm.x * frame_resized.shape[1] * (FRAME_WIDTH / frame_resized.shape[1]))
+                    y = int(lm.y * FRAME_HEIGHT)
+                    cv2.circle(canvas, (x, y), 15, (75, 100, 130), -1)
+                
+                # Teken een lijn tussen punt 5 (wijsvinger MCP) en punt 2 (duim PIP)
+                if len(landmarks_xy) >= 6:
+                    pt5 = landmarks_xy[5]
+                    pt2 = landmarks_xy[2]
+                    cv2.line(canvas, pt5, pt2, (75, 100, 130), 30)
+                
+                # Vul het stuk tussen punten 0, 1, 2, 5, 9, 13, 17 in met huidskleur
+                fill_points = []
+                for idx in [0, 1, 2, 5, 9, 13, 17]:
+                    if idx < len(landmarks_xy):
+                        fill_points.append(landmarks_xy[idx])
+                
+                if len(fill_points) >= 3:
+                    points_array = np.array(fill_points, dtype=np.int32)
+                    # Dezelfde kleur als de rest
+                    cv2.fillPoly(canvas, [points_array], (75, 100, 130))
 
         # ---------------------------
         # Collision detection
@@ -430,6 +466,12 @@ with mp_hands.Hands(
         key = cv2.waitKey(1)
         if key == ord("q") or key == 27:
             break
+
+# Restore cursor on Windows
+try:
+    ctypes.windll.user32.ShowCursor(True)
+except:
+    pass
 
 cap.release()
 cv2.destroyAllWindows()
