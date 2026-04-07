@@ -315,19 +315,19 @@ try:
                             if start_idx < len(landmarks_xy) and end_idx < len(landmarks_xy):
                                 pt1 = landmarks_xy[start_idx]
                                 pt2 = landmarks_xy[end_idx]
-                                cv2.line(canvas, pt1, pt2, (75, 100, 130), 30)
+                                cv2.line(canvas, pt1, pt2, (75, 100, 130), 10)
                         
                         # Teken gevulde cirkels op alle landmarks zonder randjes
                         for lm in hand_landmarks.landmark:
                             x = int(lm.x * frame_resized.shape[1] * (FRAME_WIDTH / frame_resized.shape[1]))
                             y = int(lm.y * FRAME_HEIGHT)
-                            cv2.circle(canvas, (x, y), 15, (75, 100, 130), -1)
+                            cv2.circle(canvas, (x, y), 5, (75, 100, 130), -1)
                         
                         # Teken een lijn tussen punt 5 (wijsvinger MCP) en punt 2 (duim PIP)
                         if len(landmarks_xy) >= 6:
                             pt5 = landmarks_xy[5]
                             pt2 = landmarks_xy[2]
-                            cv2.line(canvas, pt5, pt2, (75, 100, 130), 30)
+                            cv2.line(canvas, pt5, pt2, (75, 100, 130), 10)
                         
                         # Vul het stuk tussen punten 0, 1, 2, 5, 9, 13, 17 in met huidskleur
                         fill_points = []
