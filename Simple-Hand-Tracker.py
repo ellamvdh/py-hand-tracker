@@ -37,7 +37,7 @@ WANDER_STRENGTH = 0.5
 MAX_SPEED = 8
 
 # Boundary repulsion
-BOUNDARY_REPULSION_RADIUS = 10  # Onzichtbare zone aan de randen
+BOUNDARY_REPULSION_RADIUS = 50  # Onzichtbare zone aan de randen
 BOUNDARY_REPULSION_FORCE = 2.0   # Kracht waarmee vlinders teruggeduwd worden
 
 # Wing flap
