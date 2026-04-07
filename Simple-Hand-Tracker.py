@@ -247,268 +247,289 @@ BACKGROUND = build_background(FRAME_WIDTH, FRAME_HEIGHT)
 # ---------------------------
 cap = cv2.VideoCapture(0)
 
-# Hide cursor on Windows
-try:
-    ctypes.windll.user32.ShowCursor(False)
-except:
-    pass  # If on non-Windows system, cursor hiding will be skipped
+# Hide cursor on start (Windows & Linux compatible)
+def hide_cursor():
+    try:
+        # Windows
+        ctypes.windll.user32.ShowCursor(False)
+    except:
+        try:
+            # Linux/Raspberry Pi - use xdotool
+            import subprocess
+            subprocess.run(['unclutter', '-display', ':0', '-noevents', '-grab'], 
+                         start_new_session=True, stderr=subprocess.DEVNULL)
+        except:
+            pass  # Cursor hiding not available on this system
+
+def show_cursor():
+    try:
+        ctypes.windll.user32.ShowCursor(True)
+    except:
+        pass
 
 # Idle prompt state
 last_hand_time = time.time()
 prompt_alpha   = 0.0
 
-with mp_hands.Hands(
-    static_image_mode=False,
-    min_detection_confidence=0.7,
-    min_tracking_confidence=0.7,
-    max_num_hands=2
-) as hands:
+hide_cursor()  # Hide cursor on start
 
-    while True:
-        canvas      = BACKGROUND.copy()
-        hand_points = []
-
-        ret, frame = cap.read()
-        if not ret:
-            continue
-
-        h_cam, w_cam  = frame.shape[:2]
-        scale         = FRAME_HEIGHT / h_cam
-        frame_resized = cv2.resize(frame, (int(w_cam * scale), FRAME_HEIGHT))
-        frame_resized = cv2.flip(frame_resized, -1)  # Draai camera 180 graden
-        rgb_frame     = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
-        results       = hands.process(rgb_frame)
-
-        # Map hand coordinates
-        if results.multi_hand_landmarks:
-            last_hand_time = time.time()   # reset idle clock
-            for hand_landmarks in results.multi_hand_landmarks:
-                # Sla alle hand landmarks op voor later gebruik
-                landmarks_xy = []
-                for lm in hand_landmarks.landmark:
-                    x = int(lm.x * frame_resized.shape[1] * (FRAME_WIDTH / frame_resized.shape[1]))
-                    y = int(lm.y * FRAME_HEIGHT)
-                    hand_points.append((x, y))
-                    landmarks_xy.append((x, y))
-                
-                # Teken alle connections handmatig
-                for connection in mp_hands.HAND_CONNECTIONS:
-                    start_idx, end_idx = connection
-                    if start_idx < len(landmarks_xy) and end_idx < len(landmarks_xy):
-                        pt1 = landmarks_xy[start_idx]
-                        pt2 = landmarks_xy[end_idx]
-                        cv2.line(canvas, pt1, pt2, (75, 100, 130), 30)
-                
-                # Teken gevulde cirkels op alle landmarks zonder randjes
-                for lm in hand_landmarks.landmark:
-                    x = int(lm.x * frame_resized.shape[1] * (FRAME_WIDTH / frame_resized.shape[1]))
-                    y = int(lm.y * FRAME_HEIGHT)
-                    cv2.circle(canvas, (x, y), 15, (75, 100, 130), -1)
-                
-                # Teken een lijn tussen punt 5 (wijsvinger MCP) en punt 2 (duim PIP)
-                if len(landmarks_xy) >= 6:
-                    pt5 = landmarks_xy[5]
-                    pt2 = landmarks_xy[2]
-                    cv2.line(canvas, pt5, pt2, (75, 100, 130), 30)
-                
-                # Vul het stuk tussen punten 0, 1, 2, 5, 9, 13, 17 in met huidskleur
-                fill_points = []
-                for idx in [0, 1, 2, 5, 9, 13, 17]:
-                    if idx < len(landmarks_xy):
-                        fill_points.append(landmarks_xy[idx])
-                
-                if len(fill_points) >= 3:
-                    points_array = np.array(fill_points, dtype=np.int32)
-                    # Dezelfde kleur als de rest
-                    cv2.fillPoly(canvas, [points_array], (75, 100, 130))
-
-        # ---------------------------
-        # Collision detection
-        # ---------------------------
-        survived = []
-        for b in butterflies:
-            exploded = False
-            age = time.time() - b['born']
-            if age >= 1.0:
-                for hx, hy in hand_points:
-                    dist = math.hypot(b['x'] - hx, b['y'] - hy)
-                    if dist < COLLISION_RADIUS:
-                        spawn_explosion(int(b['x']), int(b['y']))
-                        exploded = True
-                        break
-            if not exploded:
-                survived.append(b)
-        butterflies[:] = survived
-
-        # ---------------------------
-        # Spawn butterfly
-        # ---------------------------
-        current_time = time.time()
-        if current_time - last_spawn_time > SPAWN_INTERVAL and butterfly_images:
-            # Bepaal spawnpunt: bij hand als aanwezig, anders willekeurig
-            if results.multi_hand_landmarks:
-                lm = results.multi_hand_landmarks[0].landmark[mp_hands.HandLandmark.INDEX_FINGER_TIP]
-                x = int(lm.x * FRAME_WIDTH)
-                y = int(lm.y * FRAME_HEIGHT)
-            else:
-                # Willekeurig punt in het scherm
-                x = random.randint(100, FRAME_WIDTH - 100)
-                y = random.randint(100, FRAME_HEIGHT - 100)
-            
-            # Spawn vlinder
-            butterflies.append({
-                'x': float(x), 'y': float(y),
-                'vx': random.uniform(-2, 2),
-                'vy': random.uniform(-2, 2),
-                'img': random.choice(butterfly_images),
-                'phase': random.uniform(0, 2 * math.pi),
-                'born': time.time()
-            })
-            last_spawn_time = current_time
-            
-            if len(butterflies) > MAX_BUTTERFLIES:
-                butterflies.pop(0)
-
-        # ---------------------------
-        # Physics + flapping
-        # ---------------------------
-        t = time.time()
-        for b in butterflies:
-            b['vx'] += random.uniform(-1.0, 1.0)
-            b['vy'] += random.uniform(-1.0, 1.0)
-            for hx, hy in hand_points:
-                dx   = b['x'] - hx
-                dy   = b['y'] - hy
-                dist = math.hypot(dx, dy)
-                if dist < REPULSION_RADIUS and dist > 0:
-                    force = (REPULSION_RADIUS - dist) / REPULSION_RADIUS * REPULSION_FORCE
-                    b['vx'] += dx / dist * force
-                    b['vy'] += dy / dist * force
-            
-            # Boundary repulsion - duw vlinders weg van de randen
-            # Links
-            if b['x'] < BOUNDARY_REPULSION_RADIUS:
-                dist_to_edge = b['x']
-                force = (BOUNDARY_REPULSION_RADIUS - dist_to_edge) / BOUNDARY_REPULSION_RADIUS * BOUNDARY_REPULSION_FORCE
-                b['vx'] += force
-            # Rechts
-            if b['x'] > FRAME_WIDTH - BOUNDARY_REPULSION_RADIUS:
-                dist_to_edge = FRAME_WIDTH - b['x']
-                force = (BOUNDARY_REPULSION_RADIUS - dist_to_edge) / BOUNDARY_REPULSION_RADIUS * BOUNDARY_REPULSION_FORCE
-                b['vx'] -= force
-            # Boven
-            if b['y'] < BOUNDARY_REPULSION_RADIUS:
-                dist_to_edge = b['y']
-                force = (BOUNDARY_REPULSION_RADIUS - dist_to_edge) / BOUNDARY_REPULSION_RADIUS * BOUNDARY_REPULSION_FORCE
-                b['vy'] += force
-            # Onder
-            if b['y'] > FRAME_HEIGHT - BOUNDARY_REPULSION_RADIUS:
-                dist_to_edge = FRAME_HEIGHT - b['y']
-                force = (BOUNDARY_REPULSION_RADIUS - dist_to_edge) / BOUNDARY_REPULSION_RADIUS * BOUNDARY_REPULSION_FORCE
-                b['vy'] -= force
-            
-            b['vx'] *= DAMPING
-            b['vy'] *= DAMPING
-            speed = math.hypot(b['vx'], b['vy'])
-            if speed > MAX_SPEED:
-                b['vx'] = (b['vx'] / speed) * MAX_SPEED
-                b['vy'] = (b['vy'] / speed) * MAX_SPEED
-            b['x'] += b['vx']
-            b['y'] += b['vy']
-            # Zachte clip als absolute veiligheid (vlinders mogen niet echt uit het scherm)
-            b['x'] = np.clip(b['x'], 0, FRAME_WIDTH)
-            b['y'] = np.clip(b['y'], 0, FRAME_HEIGHT)
-
-        # ---------------------------
-        # Update particles
-        # ---------------------------
-        alive_particles = []
-        for p in particles:
-            p['x']        += p['vx']
-            p['y']        += p['vy']
-            p['vy']       += p['gravity']
-            p['vx']       *= 0.97
-            p['vy']       *= 0.97
-            p['rotation'] += math.degrees(p['spin'])
-            p['life']     -= 1
-            if p['life'] > 0:
-                alive_particles.append(p)
-        particles[:] = alive_particles
-
-        # ---------------------------
-        # Draw butterflies
-        # ---------------------------
-        for b in butterflies:
-            img   = b['img']
-            h, w  = img.shape[:2]
-            flap  = 1 + FLAP_AMPLITUDE * math.sin(2 * math.pi * FLAP_SPEED * t + b['phase'])
-            new_w = max(1, int(w * flap))
-            img_flap = cv2.resize(img, (new_w, h), interpolation=cv2.INTER_LINEAR)
-            x1 = int(b['x'] - new_w / 2)
-            y1 = int(b['y'] - h / 2)
-            x2, y2 = x1 + new_w, y1 + h
-            if 0 <= x1 < FRAME_WIDTH and 0 <= y1 < FRAME_HEIGHT and x2 <= FRAME_WIDTH and y2 <= FRAME_HEIGHT:
-                if img_flap.shape[2] == 4:
-                    alpha = img_flap[:, :, 3] / 255.0
-                    for c in range(3):
-                        canvas[y1:y2, x1:x2, c] = (
-                            alpha * img_flap[:, :, c]
-                            + (1 - alpha) * canvas[y1:y2, x1:x2, c]
-                        )
-                else:
-                    canvas[y1:y2, x1:x2] = img_flap
-
-        # ---------------------------
-        # Draw daisy particles
-        # ---------------------------
-        for p in particles:
-            draw_daisy(canvas, p)
-
-        # ---------------------------
-        # Idle prompt: update alpha
-        # ---------------------------
-        if time.time() - last_hand_time > IDLE_TIMEOUT:
-            prompt_alpha = min(1.0, prompt_alpha + PROMPT_FADE)
-        else:
-            prompt_alpha = max(0.0, prompt_alpha - PROMPT_FADE * 2)
-
-        # ---------------------------
-        # Apply flipping
-        # ---------------------------
-        if FLIP_MODE is not None:
-            canvas = cv2.flip(canvas, FLIP_MODE)
-
-        # ---------------------------
-        # Draw prompt AFTER flip so text is not mirrored
-        # ---------------------------
-        if prompt_alpha > 0.01:
-            font          = cv2.FONT_HERSHEY_SIMPLEX
-            font_scale    = FRAME_WIDTH / 1800
-            thickness_txt = max(1, int(FRAME_WIDTH / 900))
-            (tw, th), _   = cv2.getTextSize(PROMPT_TEXT, font, font_scale, thickness_txt)
-            tx = (FRAME_WIDTH  - tw) // 2
-            ty = int(FRAME_HEIGHT * 0.82)
-            # Drop shadow
-            shadow = canvas.copy()
-            cv2.putText(shadow, PROMPT_TEXT, (tx + 2, ty + 2),
-                        font, font_scale, (0, 0, 0), thickness_txt + 2, cv2.LINE_AA)
-            cv2.addWeighted(shadow, prompt_alpha * 0.6, canvas, 1 - prompt_alpha * 0.6, 0, canvas)
-            # Main text — soft green-white to match the garden
-            text_layer = canvas.copy()
-            cv2.putText(text_layer, PROMPT_TEXT, (tx, ty),
-                        font, font_scale, (200, 240, 210), thickness_txt, cv2.LINE_AA)
-            cv2.addWeighted(text_layer, prompt_alpha, canvas, 1 - prompt_alpha, 0, canvas)
-
-        cv2.imshow("Butterfly Garden", canvas)
-        key = cv2.waitKey(1)
-        if key == ord("q") or key == 27:
-            break
-
-# Restore cursor on Windows
 try:
-    ctypes.windll.user32.ShowCursor(True)
-except:
-    pass
+    with mp_hands.Hands(
+        static_image_mode=False,
+        min_detection_confidence=0.7,
+        min_tracking_confidence=0.7,
+        max_num_hands=2
+    ) as hands:
 
-cap.release()
-cv2.destroyAllWindows()
+        while True:
+            try:
+                canvas      = BACKGROUND.copy()
+                hand_points = []
+
+                ret, frame = cap.read()
+                if not ret:
+                    continue
+
+                h_cam, w_cam  = frame.shape[:2]
+                scale         = FRAME_HEIGHT / h_cam
+                frame_resized = cv2.resize(frame, (int(w_cam * scale), FRAME_HEIGHT))
+                frame_resized = cv2.flip(frame_resized, -1)  # Draai camera 180 graden
+                rgb_frame     = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
+                results       = hands.process(rgb_frame)
+
+                # Map hand coordinates
+                if results.multi_hand_landmarks:
+                    last_hand_time = time.time()   # reset idle clock
+                    for hand_landmarks in results.multi_hand_landmarks:
+                        # Sla alle hand landmarks op voor later gebruik
+                        landmarks_xy = []
+                        for lm in hand_landmarks.landmark:
+                            x = int(lm.x * frame_resized.shape[1] * (FRAME_WIDTH / frame_resized.shape[1]))
+                            y = int(lm.y * FRAME_HEIGHT)
+                            hand_points.append((x, y))
+                            landmarks_xy.append((x, y))
+                        
+                        # Teken alle connections handmatig
+                        for connection in mp_hands.HAND_CONNECTIONS:
+                            start_idx, end_idx = connection
+                            if start_idx < len(landmarks_xy) and end_idx < len(landmarks_xy):
+                                pt1 = landmarks_xy[start_idx]
+                                pt2 = landmarks_xy[end_idx]
+                                cv2.line(canvas, pt1, pt2, (75, 100, 130), 30)
+                        
+                        # Teken gevulde cirkels op alle landmarks zonder randjes
+                        for lm in hand_landmarks.landmark:
+                            x = int(lm.x * frame_resized.shape[1] * (FRAME_WIDTH / frame_resized.shape[1]))
+                            y = int(lm.y * FRAME_HEIGHT)
+                            cv2.circle(canvas, (x, y), 15, (75, 100, 130), -1)
+                        
+                        # Teken een lijn tussen punt 5 (wijsvinger MCP) en punt 2 (duim PIP)
+                        if len(landmarks_xy) >= 6:
+                            pt5 = landmarks_xy[5]
+                            pt2 = landmarks_xy[2]
+                            cv2.line(canvas, pt5, pt2, (75, 100, 130), 30)
+                        
+                        # Vul het stuk tussen punten 0, 1, 2, 5, 9, 13, 17 in met huidskleur
+                        fill_points = []
+                        for idx in [0, 1, 2, 5, 9, 13, 17]:
+                            if idx < len(landmarks_xy):
+                                fill_points.append(landmarks_xy[idx])
+                        
+                        if len(fill_points) >= 3:
+                            points_array = np.array(fill_points, dtype=np.int32)
+                            # Dezelfde kleur als de rest
+                            cv2.fillPoly(canvas, [points_array], (75, 100, 130))
+
+                # ---------------------------
+                # Collision detection
+                # ---------------------------
+                survived = []
+                for b in butterflies:
+                    exploded = False
+                    age = time.time() - b['born']
+                    if age >= 1.0:
+                        for hx, hy in hand_points:
+                            dist = math.hypot(b['x'] - hx, b['y'] - hy)
+                            if dist < COLLISION_RADIUS:
+                                spawn_explosion(int(b['x']), int(b['y']))
+                                exploded = True
+                                break
+                    if not exploded:
+                        survived.append(b)
+                butterflies[:] = survived
+
+                # ---------------------------
+                # Spawn butterfly
+                # ---------------------------
+                current_time = time.time()
+                if current_time - last_spawn_time > SPAWN_INTERVAL and butterfly_images:
+                    # Bepaal spawnpunt: bij hand als aanwezig, anders willekeurig
+                    if results.multi_hand_landmarks:
+                        lm = results.multi_hand_landmarks[0].landmark[mp_hands.HandLandmark.INDEX_FINGER_TIP]
+                        x = int(lm.x * FRAME_WIDTH)
+                        y = int(lm.y * FRAME_HEIGHT)
+                    else:
+                        # Willekeurig punt in het scherm
+                        x = random.randint(100, FRAME_WIDTH - 100)
+                        y = random.randint(100, FRAME_HEIGHT - 100)
+                    
+                    # Spawn vlinder
+                    butterflies.append({
+                        'x': float(x), 'y': float(y),
+                        'vx': random.uniform(-2, 2),
+                        'vy': random.uniform(-2, 2),
+                        'img': random.choice(butterfly_images),
+                        'phase': random.uniform(0, 2 * math.pi),
+                        'born': time.time()
+                    })
+                    last_spawn_time = current_time
+                    
+                    if len(butterflies) > MAX_BUTTERFLIES:
+                        butterflies.pop(0)
+
+                # ---------------------------
+                # Physics + flapping
+                # ---------------------------
+                t = time.time()
+                for b in butterflies:
+                    b['vx'] += random.uniform(-1.0, 1.0)
+                    b['vy'] += random.uniform(-1.0, 1.0)
+                    for hx, hy in hand_points:
+                        dx   = b['x'] - hx
+                        dy   = b['y'] - hy
+                        dist = math.hypot(dx, dy)
+                        if dist < REPULSION_RADIUS and dist > 0:
+                            force = (REPULSION_RADIUS - dist) / REPULSION_RADIUS * REPULSION_FORCE
+                            b['vx'] += dx / dist * force
+                            b['vy'] += dy / dist * force
+                    
+                    # Boundary repulsion - duw vlinders weg van de randen
+                    # Links
+                    if b['x'] < BOUNDARY_REPULSION_RADIUS:
+                        dist_to_edge = b['x']
+                        force = (BOUNDARY_REPULSION_RADIUS - dist_to_edge) / BOUNDARY_REPULSION_RADIUS * BOUNDARY_REPULSION_FORCE
+                        b['vx'] += force
+                    # Rechts
+                    if b['x'] > FRAME_WIDTH - BOUNDARY_REPULSION_RADIUS:
+                        dist_to_edge = FRAME_WIDTH - b['x']
+                        force = (BOUNDARY_REPULSION_RADIUS - dist_to_edge) / BOUNDARY_REPULSION_RADIUS * BOUNDARY_REPULSION_FORCE
+                        b['vx'] -= force
+                    # Boven
+                    if b['y'] < BOUNDARY_REPULSION_RADIUS:
+                        dist_to_edge = b['y']
+                        force = (BOUNDARY_REPULSION_RADIUS - dist_to_edge) / BOUNDARY_REPULSION_RADIUS * BOUNDARY_REPULSION_FORCE
+                        b['vy'] += force
+                    # Onder
+                    if b['y'] > FRAME_HEIGHT - BOUNDARY_REPULSION_RADIUS:
+                        dist_to_edge = FRAME_HEIGHT - b['y']
+                        force = (BOUNDARY_REPULSION_RADIUS - dist_to_edge) / BOUNDARY_REPULSION_RADIUS * BOUNDARY_REPULSION_FORCE
+                        b['vy'] -= force
+                    
+                    b['vx'] *= DAMPING
+                    b['vy'] *= DAMPING
+                    speed = math.hypot(b['vx'], b['vy'])
+                    if speed > MAX_SPEED:
+                        b['vx'] = (b['vx'] / speed) * MAX_SPEED
+                        b['vy'] = (b['vy'] / speed) * MAX_SPEED
+                    b['x'] += b['vx']
+                    b['y'] += b['vy']
+                    # Zachte clip als absolute veiligheid (vlinders mogen niet echt uit het scherm)
+                    b['x'] = np.clip(b['x'], 0, FRAME_WIDTH)
+                    b['y'] = np.clip(b['y'], 0, FRAME_HEIGHT)
+
+                # ---------------------------
+                # Update particles
+                # ---------------------------
+                alive_particles = []
+                for p in particles:
+                    p['x']        += p['vx']
+                    p['y']        += p['vy']
+                    p['vy']       += p['gravity']
+                    p['vx']       *= 0.97
+                    p['vy']       *= 0.97
+                    p['rotation'] += math.degrees(p['spin'])
+                    p['life']     -= 1
+                    if p['life'] > 0:
+                        alive_particles.append(p)
+                particles[:] = alive_particles
+
+                # ---------------------------
+                # Draw butterflies
+                # ---------------------------
+                for b in butterflies:
+                    img   = b['img']
+                    h, w  = img.shape[:2]
+                    flap  = 1 + FLAP_AMPLITUDE * math.sin(2 * math.pi * FLAP_SPEED * t + b['phase'])
+                    new_w = max(1, int(w * flap))
+                    img_flap = cv2.resize(img, (new_w, h), interpolation=cv2.INTER_LINEAR)
+                    x1 = int(b['x'] - new_w / 2)
+                    y1 = int(b['y'] - h / 2)
+                    x2, y2 = x1 + new_w, y1 + h
+                    if 0 <= x1 < FRAME_WIDTH and 0 <= y1 < FRAME_HEIGHT and x2 <= FRAME_WIDTH and y2 <= FRAME_HEIGHT:
+                        if img_flap.shape[2] == 4:
+                            alpha = img_flap[:, :, 3] / 255.0
+                            for c in range(3):
+                                canvas[y1:y2, x1:x2, c] = (
+                                    alpha * img_flap[:, :, c]
+                                    + (1 - alpha) * canvas[y1:y2, x1:x2, c]
+                                )
+                        else:
+                            canvas[y1:y2, x1:x2] = img_flap
+
+                # ---------------------------
+                # Draw daisy particles
+                # ---------------------------
+                for p in particles:
+                    draw_daisy(canvas, p)
+
+                # ---------------------------
+                # Idle prompt: update alpha
+                # ---------------------------
+                if time.time() - last_hand_time > IDLE_TIMEOUT:
+                    prompt_alpha = min(1.0, prompt_alpha + PROMPT_FADE)
+                else:
+                    prompt_alpha = max(0.0, prompt_alpha - PROMPT_FADE * 2)
+
+                # ---------------------------
+                # Apply flipping
+                # ---------------------------
+                if FLIP_MODE is not None:
+                    canvas = cv2.flip(canvas, FLIP_MODE)
+
+                # ---------------------------
+                # Draw prompt AFTER flip so text is not mirrored
+                # ---------------------------
+                if prompt_alpha > 0.01:
+                    font          = cv2.FONT_HERSHEY_SIMPLEX
+                    font_scale    = FRAME_WIDTH / 1800
+                    thickness_txt = max(1, int(FRAME_WIDTH / 900))
+                    (tw, th), _   = cv2.getTextSize(PROMPT_TEXT, font, font_scale, thickness_txt)
+                    tx = (FRAME_WIDTH  - tw) // 2
+                    ty = int(FRAME_HEIGHT * 0.82)
+                    # Drop shadow
+                    shadow = canvas.copy()
+                    cv2.putText(shadow, PROMPT_TEXT, (tx + 2, ty + 2),
+                                font, font_scale, (0, 0, 0), thickness_txt + 2, cv2.LINE_AA)
+                    cv2.addWeighted(shadow, prompt_alpha * 0.6, canvas, 1 - prompt_alpha * 0.6, 0, canvas)
+                    # Main text — soft green-white to match the garden
+                    text_layer = canvas.copy()
+                    cv2.putText(text_layer, PROMPT_TEXT, (tx, ty),
+                                font, font_scale, (200, 240, 210), thickness_txt, cv2.LINE_AA)
+                    cv2.addWeighted(text_layer, prompt_alpha, canvas, 1 - prompt_alpha, 0, canvas)
+
+                cv2.imshow("Butterfly Garden", canvas)
+                key = cv2.waitKey(1)
+                if key == ord("q") or key == 27:
+                    break
+            except Exception as e:
+                print(f"Error in main loop: {e}")
+                time.sleep(0.1)  # Prevent rapid error spam
+                continue
+
+except Exception as e:
+    print(f"Fatal error: {e}")
+finally:
+    # Restore cursor and cleanup
+    show_cursor()
+    cap.release()
+    cv2.destroyAllWindows()
