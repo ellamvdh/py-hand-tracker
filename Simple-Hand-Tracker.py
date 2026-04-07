@@ -274,10 +274,12 @@ def show_cursor():
 hand_tracking_lock = threading.Lock()
 latest_hand_data = {'landmarks': None, 'frame_width': FRAME_WIDTH}
 hand_tracking_stop = False
+previous_landmarks = None
+HAND_SMOOTHING = 0.7  # 0=perfect smoothing, 1=no smoothing, probeer 0.5-0.8
 
 def hand_tracking_thread():
     """Voert hand tracking uit in een aparte thread."""
-    global latest_hand_data, hand_tracking_stop
+    global latest_hand_data, hand_tracking_stop, previous_landmarks
     
     with mp_hands.Hands(
         static_image_mode=False,
@@ -299,6 +301,27 @@ def hand_tracking_thread():
                 frame_resized = cv2.flip(frame_resized, -1)  # Draai camera 180 graden
                 rgb_frame = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
                 results = hands.process(rgb_frame)
+                
+                # Apply smoothing to hand landmarks
+                if results.multi_hand_landmarks and previous_landmarks is not None:
+                    for hand_landmarks, prev_landmarks in zip(results.multi_hand_landmarks, previous_landmarks):
+                        for lm, prev_lm in zip(hand_landmarks.landmark, prev_landmarks.landmark):
+                            # Exponentiële moving average
+                            lm.x = prev_lm.x * HAND_SMOOTHING + lm.x * (1 - HAND_SMOOTHING)
+                            lm.y = prev_lm.y * HAND_SMOOTHING + lm.y * (1 - HAND_SMOOTHING)
+                            lm.z = prev_lm.z * HAND_SMOOTHING + lm.z * (1 - HAND_SMOOTHING)
+                
+                # Store previous landmarks for next frame
+                if results.multi_hand_landmarks:
+                    previous_landmarks = [
+                        type('obj', (object,), {
+                            'landmark': [
+                                type('obj', (object,), {'x': lm.x, 'y': lm.y, 'z': lm.z})()
+                                for lm in hand.landmark
+                            ]
+                        })()
+                        for hand in results.multi_hand_landmarks
+                    ]
                 
                 # Thread-safe update van hand landmarks
                 with hand_tracking_lock:
