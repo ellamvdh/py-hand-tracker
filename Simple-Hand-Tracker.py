@@ -275,23 +275,32 @@ hand_tracking_lock = threading.Lock()
 latest_hand_data = {'landmarks': None, 'frame_width': FRAME_WIDTH}
 hand_tracking_stop = False
 previous_landmarks = None
-HAND_SMOOTHING = 0.7  # 0=perfect smoothing, 1=no smoothing, probeer 0.5-0.8
+HAND_SMOOTHING = 0.5  # 0=perfect smoothing, 1=no smoothing
+TRACKING_SKIP_FRAMES = 0  # Skip frames (0=elk frame, 1=elk 2de frame, etc)
 
 def hand_tracking_thread():
     """Voert hand tracking uit in een aparte thread."""
     global latest_hand_data, hand_tracking_stop, previous_landmarks
     
+    frame_count = 0
+    
     with mp_hands.Hands(
         static_image_mode=False,
-        min_detection_confidence=0.7,
-        min_tracking_confidence=0.7,
-        max_num_hands=2
+        min_detection_confidence=0.5,  # Lager = sneller maar minder nauwkeurig
+        min_tracking_confidence=0.5,   # Lager = sneller
+        max_num_hands=2,
+        model_complexity=0  # 0=light (sneller), 1=full (nauwkeuriger)
     ) as hands:
         while not hand_tracking_stop:
             try:
                 ret, frame = cap.read()
                 if not ret:
                     time.sleep(0.001)
+                    continue
+                
+                # Frame skipping - niet elk frame tracken
+                frame_count += 1
+                if frame_count % (TRACKING_SKIP_FRAMES + 1) != 0:
                     continue
                 
                 h_cam, w_cam = frame.shape[:2]
