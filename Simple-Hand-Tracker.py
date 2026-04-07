@@ -275,6 +275,7 @@ with mp_hands.Hands(
         h_cam, w_cam  = frame.shape[:2]
         scale         = FRAME_HEIGHT / h_cam
         frame_resized = cv2.resize(frame, (int(w_cam * scale), FRAME_HEIGHT))
+        frame_resized = cv2.flip(frame_resized, -1)  # Draai camera 180 graden
         rgb_frame     = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
         results       = hands.process(rgb_frame)
 
