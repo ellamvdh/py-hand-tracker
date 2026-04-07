@@ -32,9 +32,13 @@ API_FETCH_INTERVAL = 15
 # Physics
 REPULSION_RADIUS = 120
 REPULSION_FORCE = 1.8
-DAMPING = 0.92
+DAMPING = 0.95
 WANDER_STRENGTH = 0.5
-MAX_SPEED = 6
+MAX_SPEED = 8
+
+# Boundary repulsion
+BOUNDARY_REPULSION_RADIUS = 10  # Onzichtbare zone aan de randen
+BOUNDARY_REPULSION_FORCE = 2.0   # Kracht waarmee vlinders teruggeduwd worden
 
 # Wing flap
 FLAP_AMPLITUDE = 0.25
@@ -339,20 +343,28 @@ with mp_hands.Hands(
         # Spawn butterfly
         # ---------------------------
         current_time = time.time()
-        if results.multi_hand_landmarks and current_time - last_spawn_time > SPAWN_INTERVAL:
-            lm = results.multi_hand_landmarks[0].landmark[mp_hands.HandLandmark.INDEX_FINGER_TIP]
-            x  = int(lm.x * FRAME_WIDTH)
-            y  = int(lm.y * FRAME_HEIGHT)
-            if butterfly_images:
-                butterflies.append({
-                    'x': float(x), 'y': float(y),
-                    'vx': random.uniform(-2, 2),
-                    'vy': random.uniform(-2, 2),
-                    'img': random.choice(butterfly_images),
-                    'phase': random.uniform(0, 2 * math.pi),
-                    'born': time.time()
-                })
-                last_spawn_time = current_time
+        if current_time - last_spawn_time > SPAWN_INTERVAL and butterfly_images:
+            # Bepaal spawnpunt: bij hand als aanwezig, anders willekeurig
+            if results.multi_hand_landmarks:
+                lm = results.multi_hand_landmarks[0].landmark[mp_hands.HandLandmark.INDEX_FINGER_TIP]
+                x = int(lm.x * FRAME_WIDTH)
+                y = int(lm.y * FRAME_HEIGHT)
+            else:
+                # Willekeurig punt in het scherm
+                x = random.randint(100, FRAME_WIDTH - 100)
+                y = random.randint(100, FRAME_HEIGHT - 100)
+            
+            # Spawn vlinder
+            butterflies.append({
+                'x': float(x), 'y': float(y),
+                'vx': random.uniform(-2, 2),
+                'vy': random.uniform(-2, 2),
+                'img': random.choice(butterfly_images),
+                'phase': random.uniform(0, 2 * math.pi),
+                'born': time.time()
+            })
+            last_spawn_time = current_time
+            
             if len(butterflies) > MAX_BUTTERFLIES:
                 butterflies.pop(0)
 
@@ -361,8 +373,8 @@ with mp_hands.Hands(
         # ---------------------------
         t = time.time()
         for b in butterflies:
-            b['vx'] += random.uniform(-0.5, 0.5)
-            b['vy'] += random.uniform(-0.5, 0.5)
+            b['vx'] += random.uniform(-1.0, 1.0)
+            b['vy'] += random.uniform(-1.0, 1.0)
             for hx, hy in hand_points:
                 dx   = b['x'] - hx
                 dy   = b['y'] - hy
@@ -371,6 +383,29 @@ with mp_hands.Hands(
                     force = (REPULSION_RADIUS - dist) / REPULSION_RADIUS * REPULSION_FORCE
                     b['vx'] += dx / dist * force
                     b['vy'] += dy / dist * force
+            
+            # Boundary repulsion - duw vlinders weg van de randen
+            # Links
+            if b['x'] < BOUNDARY_REPULSION_RADIUS:
+                dist_to_edge = b['x']
+                force = (BOUNDARY_REPULSION_RADIUS - dist_to_edge) / BOUNDARY_REPULSION_RADIUS * BOUNDARY_REPULSION_FORCE
+                b['vx'] += force
+            # Rechts
+            if b['x'] > FRAME_WIDTH - BOUNDARY_REPULSION_RADIUS:
+                dist_to_edge = FRAME_WIDTH - b['x']
+                force = (BOUNDARY_REPULSION_RADIUS - dist_to_edge) / BOUNDARY_REPULSION_RADIUS * BOUNDARY_REPULSION_FORCE
+                b['vx'] -= force
+            # Boven
+            if b['y'] < BOUNDARY_REPULSION_RADIUS:
+                dist_to_edge = b['y']
+                force = (BOUNDARY_REPULSION_RADIUS - dist_to_edge) / BOUNDARY_REPULSION_RADIUS * BOUNDARY_REPULSION_FORCE
+                b['vy'] += force
+            # Onder
+            if b['y'] > FRAME_HEIGHT - BOUNDARY_REPULSION_RADIUS:
+                dist_to_edge = FRAME_HEIGHT - b['y']
+                force = (BOUNDARY_REPULSION_RADIUS - dist_to_edge) / BOUNDARY_REPULSION_RADIUS * BOUNDARY_REPULSION_FORCE
+                b['vy'] -= force
+            
             b['vx'] *= DAMPING
             b['vy'] *= DAMPING
             speed = math.hypot(b['vx'], b['vy'])
@@ -379,8 +414,9 @@ with mp_hands.Hands(
                 b['vy'] = (b['vy'] / speed) * MAX_SPEED
             b['x'] += b['vx']
             b['y'] += b['vy']
-            b['x'] = np.clip(b['x'], BUTTERFLY_SIZE // 2, FRAME_WIDTH  - BUTTERFLY_SIZE // 2)
-            b['y'] = np.clip(b['y'], BUTTERFLY_SIZE // 2, FRAME_HEIGHT - BUTTERFLY_SIZE // 2)
+            # Zachte clip als absolute veiligheid (vlinders mogen niet echt uit het scherm)
+            b['x'] = np.clip(b['x'], 0, FRAME_WIDTH)
+            b['y'] = np.clip(b['y'], 0, FRAME_HEIGHT)
 
         # ---------------------------
         # Update particles
