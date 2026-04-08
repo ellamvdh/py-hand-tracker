@@ -9,6 +9,7 @@ import threading
 import random
 import tkinter as tk
 import ctypes
+import subprocess
 
 # ---------------------------
 # Fullscreen resolution
@@ -254,10 +255,9 @@ def hide_cursor():
         ctypes.windll.user32.ShowCursor(False)
     except:
         try:
-            # Linux/Raspberry Pi - use xdotool
-            import subprocess
-            subprocess.run(['unclutter', '-display', ':0', '-noevents', '-grab'], 
-                         start_new_session=True, stderr=subprocess.DEVNULL)
+            # Linux/Raspberry Pi - use unclutter for invisible cursor
+            subprocess.Popen(['unclutter', '-idle', '0.1', '-root'], 
+                           stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
         except:
             pass  # Cursor hiding not available on this system
 
@@ -293,7 +293,7 @@ try:
                 h_cam, w_cam  = frame.shape[:2]
                 scale         = FRAME_HEIGHT / h_cam
                 frame_resized = cv2.resize(frame, (int(w_cam * scale), FRAME_HEIGHT))
-                frame_resized = cv2.flip(frame_resized, -1)  # Draai camera 180 graden
+                #frame_resized = cv2.flip(frame_resized, -1)  # Draai camera 180 graden
                 rgb_frame     = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
                 results       = hands.process(rgb_frame)
 
@@ -315,19 +315,19 @@ try:
                             if start_idx < len(landmarks_xy) and end_idx < len(landmarks_xy):
                                 pt1 = landmarks_xy[start_idx]
                                 pt2 = landmarks_xy[end_idx]
-                                cv2.line(canvas, pt1, pt2, (75, 100, 130), 10)
+                                cv2.line(canvas, pt1, pt2, (75, 100, 130), 5)
                         
                         # Teken gevulde cirkels op alle landmarks zonder randjes
                         for lm in hand_landmarks.landmark:
                             x = int(lm.x * frame_resized.shape[1] * (FRAME_WIDTH / frame_resized.shape[1]))
                             y = int(lm.y * FRAME_HEIGHT)
-                            cv2.circle(canvas, (x, y), 5, (75, 100, 130), -1)
+                            cv2.circle(canvas, (x, y), 2, (75, 100, 130), -1)
                         
                         # Teken een lijn tussen punt 5 (wijsvinger MCP) en punt 2 (duim PIP)
                         if len(landmarks_xy) >= 6:
                             pt5 = landmarks_xy[5]
                             pt2 = landmarks_xy[2]
-                            cv2.line(canvas, pt5, pt2, (75, 100, 130), 10)
+                            cv2.line(canvas, pt5, pt2, (75, 100, 130), 5)
                         
                         # Vul het stuk tussen punten 0, 1, 2, 5, 9, 13, 17 in met huidskleur
                         fill_points = []
