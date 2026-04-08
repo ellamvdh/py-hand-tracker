@@ -293,7 +293,7 @@ try:
                 h_cam, w_cam  = frame.shape[:2]
                 scale         = FRAME_HEIGHT / h_cam
                 frame_resized = cv2.resize(frame, (int(w_cam * scale), FRAME_HEIGHT))
-                #frame_resized = cv2.flip(frame_resized, -1)  # Draai camera 180 graden
+                frame_resized = cv2.flip(frame_resized, -1)  # Draai camera 180 graden
                 rgb_frame     = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
                 results       = hands.process(rgb_frame)
 
@@ -315,7 +315,7 @@ try:
                             if start_idx < len(landmarks_xy) and end_idx < len(landmarks_xy):
                                 pt1 = landmarks_xy[start_idx]
                                 pt2 = landmarks_xy[end_idx]
-                                cv2.line(canvas, pt1, pt2, (75, 100, 130), 5)
+                                cv2.line(canvas, pt1, pt2, (75, 100, 130), 8)
                         
                         # Teken gevulde cirkels op alle landmarks zonder randjes
                         for lm in hand_landmarks.landmark:
@@ -327,7 +327,7 @@ try:
                         if len(landmarks_xy) >= 6:
                             pt5 = landmarks_xy[5]
                             pt2 = landmarks_xy[2]
-                            cv2.line(canvas, pt5, pt2, (75, 100, 130), 5)
+                            cv2.line(canvas, pt5, pt2, (75, 100, 130), 8)
                         
                         # Vul het stuk tussen punten 0, 1, 2, 5, 9, 13, 17 in met huidskleur
                         fill_points = []
