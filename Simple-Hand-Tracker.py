@@ -107,7 +107,7 @@ def fetch_butterflies():
         response.raise_for_status()
         data = response.json()
         added = 0
-        for b in data[:10]:
+        for b in data:
             img_str = b.get("image") or b.get("img") or b.get("url")
             if not img_str or img_str in butterfly_sources:
                 continue
@@ -293,7 +293,7 @@ try:
                 h_cam, w_cam  = frame.shape[:2]
                 scale         = FRAME_HEIGHT / h_cam
                 frame_resized = cv2.resize(frame, (int(w_cam * scale), FRAME_HEIGHT))
-                frame_resized = cv2.flip(frame_resized, -1)  # Draai camera 180 graden
+                #frame_resized = cv2.flip(frame_resized, -1)  # Draai camera 180 graden
                 rgb_frame     = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
                 results       = hands.process(rgb_frame)
 
